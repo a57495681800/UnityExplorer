@@ -1,4 +1,6 @@
-using System.Linq;
+﻿using System.Security.Cryptography;
+using System.Text;
+using System.Xml;
 using System.Xml.Serialization;
 using HarmonyLib;
 using UnityExplorer.CSConsole;
@@ -58,7 +60,7 @@ namespace UnityExplorer.Hooks
                 pendingGenericDefinition = type;
                 HookManagerPanel.genericArgsHandler.Show(OnGenericClassChosen, OnGenericClassCancel, type);
                 HookManagerPanel.Instance.SetPage(HookManagerPanel.Pages.GenericArgsSelector);
-                return;    
+                return;
             }
 
             ShowMethodsForType(type);
@@ -240,23 +242,77 @@ namespace UnityExplorer.Hooks
             public string Description;
             public string SourceCode;
             public string ReflectedType;
+            public bool IsActive;
         }
-        
+        public static string GenerateFileName(string description)
+        {
+            using (SHA256 sha256 = SHA256.Create())
+            {
+                byte[] hash = sha256.ComputeHash(Encoding.UTF8.GetBytes(description));
+                return BitConverter.ToString(hash).Replace("-", "").ToLower() + ".txt";
+            }
+        }
         public static void SaveHooks(HookInstance hook)
         {
             HookData data = new HookData();
             data.Description = hook.TargetMethod.FullDescription();
             data.ReflectedType = hook.TargetMethod.ReflectedType.ToString();
             data.SourceCode = hook.PatchSourceCode;
-            string filename = data.Description.GetHashCode().ToString("X8") + ".txt";
+            data.IsActive = hook.Enabled;
+            // string filename = data.Description.GetHashCode().ToString("X8") + ".txt";
+            string filename = GenerateFileName(data.Description);
             string folderpath = Path.Combine(Path.GetDirectoryName(Assembly.GetExecutingAssembly().Location), "UnityExplorerHarmonyHooks");
             Directory.CreateDirectory(folderpath);
             string fpath = Path.Combine(folderpath, filename);
             XmlSerializer xs = new XmlSerializer(typeof(HookData));
-            TextWriter tw = new StreamWriter(fpath);
-            xs.Serialize(tw, data);
-            tw.Close();
+            using (TextWriter tw = new StreamWriter(fpath))
+            {
+                xs.Serialize(tw, data);
+            }
             ExplorerCore.Log("Save hook: " + data.Description + " to: " + filename);
+        }
+
+        public static void UpdateHookIsActive(string description, bool isActive)
+        {
+            // 构造文件名
+            string filename = GenerateFileName(description);  // 使用之前的SHA256生成文件名的方法
+            string folderpath = Path.Combine(Path.GetDirectoryName(Assembly.GetExecutingAssembly().Location), "UnityExplorerHarmonyHooks");
+            string filePath = Path.Combine(folderpath, filename);
+
+            // 检查文件是否存在
+            if (!File.Exists(filePath))
+            {
+                ExplorerCore.LogError("Hook file does not exist: " + filePath);
+                return;
+            }
+
+            try
+            {
+                // 加载 XML 文件
+                XmlDocument xmlDoc = new XmlDocument();
+                xmlDoc.Load(filePath);
+
+                // 查找 <IsActive> 元素
+                XmlNode isActiveNode = xmlDoc.SelectSingleNode("/HookData/IsActive");
+
+                if (isActiveNode != null)
+                {
+                    // 更新 IsActive 节点的值
+                    isActiveNode.InnerText = isActive.ToString().ToLower();
+
+                    // 保存文件
+                    xmlDoc.Save(filePath);
+                    ExplorerCore.Log("Updated hook: " + description + " IsActive: " + isActive);
+                }
+                else
+                {
+                    ExplorerCore.LogError("IsActive element not found in XML.");
+                }
+            }
+            catch (Exception ex)
+            {
+                ExplorerCore.LogError("Error updating hook: " + ex.Message);
+            }
         }
 
         public void LoadSavedHooks()
@@ -292,7 +348,7 @@ namespace UnityExplorer.Hooks
                         return;
                     }
 
-                    HookInstance hook = new(method, hookData.SourceCode);
+                    HookInstance hook = new(method, hookData.SourceCode, hookData.IsActive);
                     HookList.hookedSignatures.Add(hookData.Description);
                     HookList.currentHooks.Add(hookData.Description, hook);
 
@@ -302,17 +358,18 @@ namespace UnityExplorer.Hooks
                 catch (Exception ex)
                 {
                     ExplorerCore.LogError("Exception when load: " + fi.Name + " ---------\n" + ex.Message);
+                    ExplorerCore.LogError("Check the XML format for: " + fi.FullName);
                 }
             }
         }
 
 
-        private void xs_UnknownNode(object sender, XmlNodeEventArgs e)
+        private static void xs_UnknownNode(object sender, XmlNodeEventArgs e)
         {
             ExplorerCore.LogWarning("Unknown Node in hooks:" + e.Name + "\t" + e.Text);
         }
 
-        private void xs_UnknownAttribute(object sender, XmlAttributeEventArgs e)
+        private static void xs_UnknownAttribute(object sender, XmlAttributeEventArgs e)
         {
             System.Xml.XmlAttribute attr = e.Attr;
             ExplorerCore.LogWarning("Unknown attribute in hooks:" + attr.Name + "='" + attr.Value + "'");

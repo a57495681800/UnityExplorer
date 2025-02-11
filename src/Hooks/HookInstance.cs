@@ -44,10 +44,10 @@ namespace UnityExplorer.Hooks
             GenerateDefaultPatchSourceCode(targetMethod);
 
             if (CompileAndGenerateProcessor(PatchSourceCode))
-                Patch();
+                Patch(true);
         }
-        
-        public HookInstance(MethodInfo targetMethod, string code)
+
+        public HookInstance(MethodInfo targetMethod, string code, bool IsActive)
         {
             this.TargetMethod = targetMethod;
             this.signature = TargetMethod.FullDescription();
@@ -56,7 +56,10 @@ namespace UnityExplorer.Hooks
 
             if (CompileAndGenerateProcessor(PatchSourceCode))
             {
-                Patch();
+                if (IsActive)
+                {
+                    Patch();
+                }
             }
         }
 
@@ -76,8 +79,9 @@ namespace UnityExplorer.Hooks
                 patchProcessor = ExplorerCore.Harmony.CreateProcessor(TargetMethod);
 
                 // Dynamically compile the patch method
+                string className = $"DynamicPatch_{DateTime.Now.Ticks}";
 
-                codeBuilder.AppendLine($"static class DynamicPatch_{DateTime.Now.Ticks}");
+                codeBuilder.AppendLine($"static class {className}");
                 codeBuilder.AppendLine("{");
                 codeBuilder.AppendLine(patchSource);
                 codeBuilder.AppendLine("}");
@@ -91,9 +95,14 @@ namespace UnityExplorer.Hooks
                 // Get the most recent Patch type in the source file
                 TypeContainer typeContainer = ((CompilationSourceFile)fi_sourceFile.GetValue(scriptEvaluator))
                     .Containers
-                    .Last(it => it.MemberName.Name.StartsWith("DynamicPatch_"));
+                    .FirstOrDefault(it => it.MemberName.Name == className);
+                if(typeContainer==null)
+                   throw new FormatException($"Unable to compile the generated patch!");
+
                 // Get the TypeSpec from the TypeDefinition, then get its "MetaInfo" (System.Type)
                 Type patchClass = ((TypeSpec)pi_Definition.GetValue((Class)typeContainer, null)).GetMetaInfo();
+                if (patchClass == null)
+                    throw new FormatException($"Unable to compile the generated patch!");
 
                 // Create the harmony patches as defined
 
@@ -225,18 +234,20 @@ namespace UnityExplorer.Hooks
         public void TogglePatch()
         {
             if (!Enabled)
-                Patch();
+                Patch(true);
             else
-                Unpatch();
+                Unpatch(true);
         }
 
-        public void Patch()
+        public void Patch(bool check = false)
         {
             try
             {
                 patchProcessor.Patch();
 
                 Enabled = true;
+                if(check)
+                    HookCreator.UpdateHookIsActive(this.TargetMethod.FullDescription(), Enabled);
             }
             catch (Exception ex)
             {
@@ -244,7 +255,7 @@ namespace UnityExplorer.Hooks
             }
         }
 
-        public void Unpatch()
+        public void Unpatch(bool check = false)
         {
             try
             {
@@ -258,6 +269,8 @@ namespace UnityExplorer.Hooks
                     patchProcessor.Unpatch(transpiler);
 
                 Enabled = false;
+                if(check)
+                    HookCreator.UpdateHookIsActive(this.TargetMethod.FullDescription(), Enabled);
             }
             catch (Exception ex)
             {

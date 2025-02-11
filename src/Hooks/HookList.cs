@@ -31,7 +31,7 @@ namespace UnityExplorer.Hooks
             if (HookCreator.CurrentEditedHook == hook)
                 HookCreator.EditorInputCancel();
 
-            hook.Unpatch();
+            hook.Unpatch(true);
             currentHooks.RemoveAt(index);
             hookedSignatures.Remove(hook.TargetMethod.FullDescription());
 
